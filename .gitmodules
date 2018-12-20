@@ -1,0 +1,3 @@
+[submodule "deps/json-builder"]
+	path = deps/json-builder
+	url = git@github.com:benjaminselfridge/json-builder.git
