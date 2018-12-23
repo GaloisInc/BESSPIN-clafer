@@ -1,2 +1,7 @@
-packages: deps/json-builder
+packages: deps/bv-sized
+          deps/bv-sized-float
+          deps/elf-edit
+          deps/json-builder
+          deps/softfloat-hs
+          grift/grift
           clafer

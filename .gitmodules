@@ -1,3 +1,12 @@
 [submodule "deps/json-builder"]
 	path = deps/json-builder
 	url = git@github.com:benjaminselfridge/json-builder.git
+[submodule "clafer"]
+	path = clafer
+	url = git@github.com:gsdlab/clafer.git
+[submodule "grift"]
+	path = grift
+	url = git@github.com:GaloisInc/grift.git
+[submodule "deps/elf-edit"]
+	path = deps/elf-edit
+	url = git@github.com:GaloisInc/elf-edit.git
