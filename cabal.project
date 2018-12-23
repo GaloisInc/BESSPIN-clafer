@@ -2,6 +2,7 @@ packages: deps/bv-sized
           deps/bv-sized-float
           deps/elf-edit
           deps/json-builder
+          deps/parameterized-utils
           deps/softfloat-hs
           grift/grift
           clafer
