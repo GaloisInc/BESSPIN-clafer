@@ -1,8 +1,0 @@
-// Test for until constraint
-
-a
- b ?
-  c ?
-  d ?
-  [c until d]
-

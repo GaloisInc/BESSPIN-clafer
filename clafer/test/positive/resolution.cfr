@@ -1,9 +1,0 @@
-XX
-  x
-    y
-  [x]
-
-ZZ
-  z -> int
-    y
-  [z > 0]

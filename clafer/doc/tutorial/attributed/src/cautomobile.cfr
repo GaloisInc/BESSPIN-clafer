@@ -1,8 +1,0 @@
-Automobile
-    xor Engine
-        Gasoline
-        Electric
-            [Radio]
-    or Radio ?
-        CDPlayer
-        Tape

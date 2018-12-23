@@ -1,4 +1,0 @@
-rate -> real
-[ rate = 1.99 ]
-
-interest -> real = 100 * rate

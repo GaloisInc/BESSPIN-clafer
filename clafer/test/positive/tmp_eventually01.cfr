@@ -1,6 +1,0 @@
-// Test for eventually pattern
-
-final a
-	b ?
-		c ?
- 		[eventually c]
