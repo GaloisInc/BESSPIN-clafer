@@ -3,7 +3,7 @@
 	url = git@github.com:benjaminselfridge/json-builder.git
 [submodule "clafer"]
 	path = clafer
-	url = git@github.com:gsdlab/clafer.git
+	url = git@gitlab-ext.galois.com:ssith/besspin-tools.git
 [submodule "grift"]
 	path = grift
 	url = git@github.com:GaloisInc/grift.git
