@@ -33,6 +33,7 @@ import Control.Applicative
 import Control.Exception (assert)
 import Control.Lens ((&), (%~), traversed)
 import Control.Monad.Except
+import qualified Control.Monad.Fail as F
 import Control.Monad.List
 import Control.Monad.Reader
 import Data.Either
@@ -119,13 +120,13 @@ parentOf uidIClaferMap' c = case _parentUID <$> findIClafer uidIClaferMap' c of
  -    C      // C - child
  -  B : A    // B - parent
  -}
-isIndirectChild :: (Monad m) => UIDIClaferMap -> UID -> UID -> m Bool
+isIndirectChild :: (Monad m, F.MonadFail m) => UIDIClaferMap -> UID -> UID -> m Bool
 isIndirectChild uidIClaferMap' child parent = do
   (_:allSupers) <- hierarchy uidIClaferMap' parent
   childOfSupers <- mapM ((isChild uidIClaferMap' child)._uid) allSupers
   return $ or childOfSupers
 
-isChild :: (Monad m) => UIDIClaferMap -> UID -> UID -> m Bool
+isChild :: (Monad m, F.MonadFail m) => UIDIClaferMap -> UID -> UID -> m Bool
 isChild uidIClaferMap' child parent =
     case findIClafer uidIClaferMap' child of
         Nothing -> return False
