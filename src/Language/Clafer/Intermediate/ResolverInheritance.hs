@@ -89,11 +89,14 @@ resolveNSuper abstractClafers (Just (PExp _ pid' pos' (IClaferId _ id' _ _))) =
       then throwError $ SemanticErr pos' $ "Primitive types are not allowed as super types: " ++ id'
       else do
         r <- resolveN pos' abstractClafers id'
-        (id'', [superClafer']) <- case r of
+        x <- case r of
           Nothing -> throwError $ SemanticErr pos' $ "No superclafer found: " ++ id'
           Just m  -> return m
-        return (Just $ PExp (Just $ TClafer [id'']) pid' pos' (IClaferId "" id'' (isTopLevel superClafer') (Just id''))
-                 , Just superClafer')
+        case x of
+          (id'', [superClafer']) ->
+            return (Just $ PExp (Just $ TClafer [id'']) pid' pos' (IClaferId "" id'' (isTopLevel superClafer') (Just id''))
+                   , Just superClafer')
+          _ -> error "pattern match in resolveNSuper"
 resolveNSuper _ x = return (x, Nothing)
 
 
