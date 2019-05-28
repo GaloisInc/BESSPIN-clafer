@@ -361,7 +361,7 @@ resolveTPExp' p@PExp{_inPos, _exp} =
             | _op `elem` logBinOps = test (isTBoolean t1 && isTBoolean t2) >> return TBoolean
             | _op `elem` ltlBinOps = test (isTBoolean t1 && isTBoolean t2) >> return TBoolean
             | _op `elem` [iLt, iGt, iLte, iGte] = test (numeric t1 && numeric t2) >> return TBoolean
-            | _op `elem` [iEq, iNeq] = testIntersect t1 t2 >> return TBoolean
+            | _op `elem` [iEq, iNeq] = testNotSame arg1' arg2' >> testIntersect t1 t2 >> return TBoolean
             | _op == iDifference = testNotSame arg1' arg2' >> testIntersect t1 t2 >> return t1
             | _op == iIntersection = testNotSame arg1' arg2' >> testIntersect t1 t2
             | _op `elem` [iDomain, iRange] = testIntersect t1 t2
