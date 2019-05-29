@@ -94,6 +94,7 @@ library
                       , Language.Clafer.Generator.AlloyLtl
                       , Language.Clafer.Generator.Choco
                       , Language.Clafer.Generator.Concat
+                      , Language.Clafer.Generator.FMJSON
                       , Language.Clafer.Generator.Graph
                       , Language.Clafer.Generator.Html
                       , Language.Clafer.Generator.Stats

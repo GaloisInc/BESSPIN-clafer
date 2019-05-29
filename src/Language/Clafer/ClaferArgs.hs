@@ -36,7 +36,7 @@ import Data.Version (showVersion)
 import GetURL
 
 -- | Type of output to be generated at the end of compilation
-data ClaferMode = AlloyLtl | Alloy | JSON | Clafer | Html | Graph | CVLGraph | Choco
+data ClaferMode = AlloyLtl | Alloy | JSON | Clafer | Html | Graph | CVLGraph | Choco | FMJSON
   deriving (Eq, Show, Ord, Data, Typeable)
 instance Default ClaferMode where
   def = Alloy
@@ -75,7 +75,7 @@ data ClaferArgs = ClaferArgs {
 
 clafer :: ClaferArgs
 clafer = ClaferArgs {
-  mode                = [] &= help "Generated output type. Available CLAFERMODEs are: 'alloy' (default, Alloy 4.2); 'json' (intermediate representation of Clafer model); 'clafer' (analyzed and desugared clafer model); 'html' (original model in HTML); 'graph' (graphical representation written in DOT language); 'cvlgraph' (cvl notation representation written in DOT language); 'choco' (Choco constraint programming solver). Multiple modes can be specified at the same time, e.g., '-m alloy -m html'." &= name "m",
+  mode                = [] &= help "Generated output type. Available CLAFERMODEs are: 'alloy' (default, Alloy 4.2); 'json' (intermediate representation of Clafer model); 'clafer' (analyzed and desugared clafer model); 'html' (original model in HTML); 'graph' (graphical representation written in DOT language); 'cvlgraph' (cvl notation representation written in DOT language); 'choco' (Choco constraint programming solver); 'fmjson' (BESSPIN feature model JSON). Multiple modes can be specified at the same time, e.g., '-m alloy -m html'." &= name "m",
   console_output      = def &= help "Output code on console." &= name "o",
   flatten_inheritance = def &= help "Flatten inheritance ('alloy' mode only)." &= name "i",
   timeout_analysis    = def &= help "Timeout for analysis.",

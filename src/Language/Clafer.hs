@@ -124,6 +124,7 @@ import           Language.Clafer.Generator.Alloy
 import           Language.Clafer.Generator.AlloyLtl
 import           Language.Clafer.Generator.Choco
 import           Language.Clafer.Generator.Concat
+import           Language.Clafer.Generator.FMJSON
 import           Language.Clafer.Generator.Graph
 import           Language.Clafer.Generator.Html
 import           Language.Clafer.Generator.Stats
@@ -539,6 +540,28 @@ generate =
                    stringMap = Map.empty,
                    scopesList = []
                   }) ]
+          else []
+        )
+        -- result for JSON
+        ++ (if (FMJSON `elem` modes)
+            then case iModuleToFMJSON iModule of
+                Right j ->
+                    [ (FMJSON,
+                       CompilerResult {
+                        extension = "fm.json",
+                        outputCode = convertString $ encode j,
+                        statistics = stats,
+                        claferEnv  = env,
+                        mappingToAlloy = [],
+                        stringMap = Map.empty,
+                        scopesList = []
+                       }) ]
+                Left err ->
+                    [ (FMJSON,
+                       NoCompilerResult {
+                        reason = err
+                       }) ]
+                          
           else []
         )
         -- result for Clafer
