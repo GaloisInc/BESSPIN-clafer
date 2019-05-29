@@ -6,6 +6,8 @@ import Control.Lens hiding (elements, children)
 import Control.Monad
 import Control.Monad.State
 import qualified Data.Aeson as A
+import Data.Map (Map)
+import qualified Data.Map as M
 import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -153,7 +155,8 @@ data Feature = Feature
     { _fName :: String
     , _fCard :: FeatureCard
     , _fGCard :: GroupCard
-    , _fChildren :: [Feature]
+    , _fParent :: Maybe String
+    , _fChildren :: [String]
     }
 
 makeLenses ''Feature
@@ -176,6 +179,7 @@ instance A.ToJSON Feature where
         [ "name" A..= (f ^. fName)
         , "card" A..= (f ^. fCard)
         , "gcard" A..= (f ^. fGCard)
+        , "parent" A..= (f ^. fParent)
         , "children" A..= (f ^. fChildren)
         ]
 
@@ -192,16 +196,26 @@ validateElement (IEConstraint isHard' pexp) = do
 validateElement (IEGoal _ pexp) = do
     unsupported $ "optimization goal (at " ++ show (pexp ^. inPos) ++ ")"
 
-uclaferFeature :: UClafer -> Either String Feature
-uclaferFeature ucfr = do
+validateUClafer :: UClafer -> Either String ()
+validateUClafer ucfr = do
     mapM_ validateElement $ collectElements ucfr
-    children' <- mapM uclaferFeature $ ucfr ^. children
-    return $ Feature
-        (ucfr ^. unrolledUid)
-        (convCard $ ucfr ^. concCfr . card)
-        (convGCard $ ucfr ^. concCfr . gcard)
-        children'
 
+walkUClafer :: UClafer -> [UClafer]
+walkUClafer ucfr = ucfr : concatMap walkUClafer (ucfr ^. children)
+
+-- Build parent map entries for a single UClafer.  This maps the name of each
+-- of `ucfr`'s children to the name of `ucfr` itself.
+makeParentMap :: UClafer -> Map String String
+makeParentMap ucfr = M.fromList $
+    [(child ^. unrolledUid, ucfr ^. unrolledUid) | child <- ucfr ^. children]
+
+uclaferFeature :: Map String String -> UClafer -> Feature
+uclaferFeature parentMap ucfr = Feature
+    (ucfr ^. unrolledUid)
+    (convCard $ ucfr ^. concCfr . card)
+    (convGCard $ ucfr ^. concCfr . gcard)
+    (M.lookup (ucfr ^. unrolledUid) parentMap)
+    (map (\c -> c ^. unrolledUid) $ ucfr ^. children)
 
 iModuleToFMJSON :: IModule -> Either String A.Value
 iModuleToFMJSON imod = do
@@ -210,8 +224,14 @@ iModuleToFMJSON imod = do
     mapM_ validateElement elts
     ucfrs <- catMaybes <$> mapM (unrollElementClafer uidMap) elts
     let ucfrs' = assignUids ucfrs
-    feats <- mapM uclaferFeature ucfrs'
+    let allUCfrs = concatMap walkUClafer ucfrs'
+    mapM_ validateUClafer allUCfrs
+    let parentMap = foldMap makeParentMap allUCfrs
+    let feats = map (uclaferFeature parentMap) allUCfrs
+    let rootNames = filter (\n -> not $ M.member n parentMap) $ map (\f -> f ^. fName) feats
 
     return $ A.object
-        [ "features" A..= feats
+        [ "features" A..= M.fromList [(f ^. fName, f) | f <- feats]
+        , "roots" A..= rootNames
+        , "constraints" A..= ([] :: [()])
         ]
