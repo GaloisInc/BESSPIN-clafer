@@ -95,6 +95,7 @@ When `kind` is `"op"`, the object has two additional fields:
 
     - `"and"`: Boolean and.  Takes any number of arguments.
     - `"or"`: Boolean or.  Takes any number of arguments.
+    - `"xor"`: Boolean exclusive or.  Takes any number of arguments.
     - `"not"`: Boolean negation.  Takes one argument.
     - `"imp"`: Implication.  `A imp B` is equivalent to `(not A) or B`.  Takes
       two arguments.

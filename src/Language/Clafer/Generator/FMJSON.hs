@@ -5,6 +5,7 @@ import Prelude hiding (exp)
 import Control.Lens hiding (elements, children)
 import Control.Monad
 import Control.Monad.State
+import Control.Monad.Writer
 import qualified Data.Aeson as A
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -159,6 +160,12 @@ data Feature = Feature
     , _fChildren :: [String]
     }
 
+data CExp =
+    CeOp String [CExp] |
+    CeLit Bool |
+    CeFeat String
+    deriving (Eq, Show)
+
 makeLenses ''Feature
 
 instance A.ToJSON FeatureCard where
@@ -182,6 +189,220 @@ instance A.ToJSON Feature where
         , "parent" A..= (f ^. fParent)
         , "children" A..= (f ^. fChildren)
         ]
+
+instance A.ToJSON CExp where
+    toJSON (CeOp op' args) = A.object
+        [ "kind" A..= ("op" :: Text)
+        , "op" A..= op'
+        , "args" A..= args
+        ]
+    toJSON (CeLit val) = A.object
+        [ "kind" A..= ("lit" :: Text)
+        , "val" A..= val
+        ]
+    toJSON (CeFeat name) = A.object
+        [ "kind" A..= ("feat" :: Text)
+        , "name" A..= name
+        ]
+
+
+-- Clafer models map fairly directly to relational models in Alloy.  Each
+-- nested IClafer gives rise to a binary relation that relates UClafers derived
+-- from its parent IClafer to UClafers derived from itself.  Each non-nested
+-- IClafer gives rise to a set (unary relation) of instances of itself.
+--
+-- FMJSON boolean constraints are not relational.  We need to convert Clafer
+-- constraints, which check for non-emptiness of the set resulting from some
+-- relational join, into a check of the (boolean) value of a single feature.
+--
+-- We can do the conversion as long as we can reduce every relational join
+-- expression to a set that contains (at most) a single UClafer.  We manage
+-- this by requiring each part of the Clafer expression to produce a set with
+-- at most one element.
+--
+--  1. `this` is always one element.
+--  2. `x.parent` is always one element.
+--  3. Top-level `x` is one element if `x` is instantiated exactly once.  In
+--     other words, `x` must appear only once among all `UClafer`s' `concCfr`
+--     and `absCfr` fields.
+--  4. `x.y` is one element if `x` is one element and `y` is instantiated
+--     exactly once within each `x`.  Note this works only because we disallow
+--     clafers with cardinality > 1.
+--
+-- We use `Map UID (Unique String)` for tracking the "instantiated exactly
+-- once" property.  When looking up a given IClafer's `uid`, `One name` means
+-- there's a unique UClafer instance whose `unrolledUid` is `name`, and `Many`
+-- means there may be multiple UClafer instances of this IClafer.
+
+data Unique a = One a | Many
+    deriving (Eq, Show)
+
+instance Semigroup (Unique a) where
+    _ <> _ = Many
+
+getUnique :: Unique a -> Maybe a
+getUnique (One x) = Just x
+getUnique _ = Nothing
+
+data Scope = Scope
+    -- `unrolledUid` of the parent of this `UClafer`, or `Nothing` if it's at
+    -- top  level.
+    { _scParent :: Maybe String
+    -- Maps UIDs as they appear in `GlobalBind`s to the `unrolledUid` of the
+    -- unique instance of that clafer within the current scope.
+    , _scResolve :: Map UID (Unique String)
+    }
+
+data ConstraintContext = ConstraintContext
+    { _ctxCurName :: Maybe String
+    , _ctxScopeMap :: Map String Scope
+    , _ctxGlobalResolve :: Map UID (Unique String)
+    }
+
+makeLenses ''Scope
+makeLenses ''ConstraintContext
+
+-- Try to resolve an IExp to a feature name.  Requires the `IExp` to be a set
+-- expression producing a set of size either 0 or 1, reflecting whether a
+-- single known feature is disabled or enabled.
+iExpFeature :: ConstraintContext -> IExp -> Either String String
+iExpFeature ctx (IFunExp "." [x, f]) = do
+    -- We call `pExpFeature` only at top level, to avoid stacking multiple
+    -- "in constraint at ..." clauses onto the error messages.
+    parentName <- iExpFeature ctx (x ^. exp)
+    sc <- case M.lookup parentName $ ctx ^. ctxScopeMap of
+        Just sc -> return sc
+        _ -> error $ "no scope for ucfr " ++ show parentName ++ "?"
+    childName <- case f ^. exp of
+        IClaferId { _sident = "parent" } -> case sc ^. scParent of
+            Just name -> return name
+            Nothing -> unsupported $ "parent reference from root clafer " ++ show parentName
+        IClaferId { _binding = binding' } -> case binding' of
+            GlobalBind uid' -> case M.lookup uid' (sc ^. scResolve) of
+                Just (One name) -> return name
+                Just Many -> unsupported $ "reference to non-unique child " ++ show uid' ++
+                    " of " ++ show parentName
+                Nothing -> unsupported $ "reference to unknown child " ++ show uid' ++
+                    " of " ++ show parentName
+            _ -> unsupported $ "non-global binding as RHS " ++ show f ++ " of (.)"
+        _ -> unsupported $ "non-ident " ++ show f ++ " as RHS of (.)"
+    return childName
+iExpFeature ctx (IClaferId { _sident = "this" }) = case ctx ^. ctxCurName of
+    Just x -> return x
+    Nothing -> unsupported "`this` at top level"
+iExpFeature ctx (IClaferId { _sident = sident', _binding = binding' }) = case binding' of
+    GlobalBind uid' -> case M.lookup uid' (ctx ^. ctxGlobalResolve) of
+        Just (One name) -> return name
+        Just Many -> unsupported $ "reference to non-unique global " ++ show uid'
+        Nothing -> unsupported $ "reference to unknown global " ++ show uid'
+    _ -> unsupported $ "non-global binding for " ++ show sident'
+iExpFeature _ctx e = unsupported $ "expression " ++ show e
+
+pExpFeature :: ConstraintContext -> PExp -> Either String String
+pExpFeature ctx e = case iExpFeature ctx $ e ^. exp of
+    Left err -> Left $ err ++ " (in expression at " ++ show (e ^. inPos) ++ ")"
+    Right x -> Right x
+
+iExpConstraint :: ConstraintContext -> IExp -> Either String CExp
+iExpConstraint ctx (IDeclPExp { _quant = quant', _oDecls = oDecls', _bpexp = bpexp' }) = do
+    when (not $ null oDecls') $ unsupported "decls in quantified expression"
+    case quant' of
+        INo -> do
+            name <- pExpFeature ctx bpexp'
+            return $ CeOp "not" [CeFeat name]
+        ILone -> do
+            -- `lone` (set size either 0 or 1) is satisfied by every feature in
+            -- the FMJSON output.  We only need to check that `bpexp'` resolves
+            -- to a feature.
+            void $ pExpFeature ctx bpexp'
+            return $ CeLit True
+        -- `one` (== 1) and `some` (>= 1) are equivalent when the cardinality
+        -- of every resolvable feature is capped at 1.
+        IOne -> CeFeat <$> pExpFeature ctx bpexp'
+        ISome -> CeFeat <$> pExpFeature ctx bpexp'
+        _ -> unsupported $ "quantifier " ++ show quant'
+iExpConstraint ctx (IFunExp { _op = op', _exps = exps' })
+  | op' `elem` ["=", "!="]
+  , [ae, be] <- exps'
+  , IInt a <- ae ^. exp
+  , IInt b <- be ^. exp =
+    return $ CeLit $ case op' of
+        "=" -> a == b
+        "!=" -> a /= b
+        _ -> error "unreachable"
+  | otherwise = do
+    let requireArgCount n = when (length exps' /= n) $
+            unsupported $ "operation " ++ show op' ++ " on " ++ show (length exps') ++
+                " arguments (expected " ++ show n ++ ")"
+    ceOp <- case op' of
+        "&&" -> return "and"
+        "||" -> return "or"
+        "=>" -> requireArgCount 2 >> return "imp"
+        "<=>" -> requireArgCount 2 >> return "eqv"
+        "xor" -> return "xor"
+        "!" -> requireArgCount 2 >> return "not"
+        _ -> unsupported $ "operation " ++ show op'
+    ceArgs <- mapM (\pe -> iExpConstraint ctx $ pe ^. exp) exps'
+    return $ CeOp ceOp ceArgs
+iExpConstraint _ctx e = unsupported $ "expression " ++ show e
+
+pExpConstraint :: ConstraintContext -> PExp -> Either String CExp
+pExpConstraint ctx e = case iExpConstraint ctx $ e ^. exp of
+    Left err -> Left $ err ++ " (in constraint at " ++ show (e ^. inPos) ++ ")"
+    Right x -> Right x
+
+
+type ResolveMap = Map UID (Unique String)
+
+-- Build the UID-to-UClafer resolution tables for `ucfr` and its descendants.
+buildResolveM :: UClafer -> Writer (Map String ResolveMap) ResolveMap
+buildResolveM ucfr = do
+    let selfMap = M.fromList [(cfr ^. uid, One $ ucfr ^. unrolledUid)
+            | cfr <- (ucfr ^. concCfr) : (ucfr ^. absCfrs)]
+    childrenMap <- M.unionsWith (<>) <$> mapM buildResolveM (ucfr ^. children)
+    let rm = M.unionWith (<>) selfMap childrenMap
+    tell $ M.singleton (ucfr ^. unrolledUid) rm
+    return rm
+
+-- Build the UID-to-UClafer resolution tables for the entire model.  The first
+-- return value is the map for the global scope; the second contains the map
+-- for each `UClafer` in `ucfrs` and descendants, keyed on `unrolledUid`.
+buildResolve :: [UClafer] -> (ResolveMap, Map String ResolveMap)
+buildResolve ucfrs = runWriter $ M.unionsWith (<>) <$> mapM buildResolveM ucfrs
+
+buildScopes :: Map String ResolveMap -> Map String String -> Map String Scope
+buildScopes rms ps =
+    M.mapWithKey (\name rm -> Scope (M.lookup name ps) rm) rms
+
+elementAsPExp :: IElement -> Maybe PExp
+elementAsPExp (IEConstraint True pexp) = Just pexp
+elementAsPExp _ = Nothing
+
+elementsConstraints :: ConstraintContext -> [IElement] -> Either String [CExp]
+elementsConstraints ctx elts = do
+    let exps' = mapMaybe elementAsPExp elts
+    mapM (pExpConstraint ctx) exps'
+
+uClaferConstraints :: ConstraintContext -> UClafer -> Either String [CExp]
+uClaferConstraints ctx ucfr = do
+    let elts = collectElements ucfr
+    let ctx' = ctx & ctxCurName .~ Just (ucfr ^. unrolledUid)
+    elementsConstraints ctx' elts
+
+
+simplifyCExp :: CExp -> CExp
+simplifyCExp (CeOp op' args)
+  | isAssoc = CeOp op' $ concatMap (subArgs op') args'
+  | otherwise = CeOp op' args'
+  where
+    isAssoc = op' `elem` ["and", "or", "xor"]
+    args' = map simplifyCExp args
+simplifyCExp (CeLit b) = CeLit b
+simplifyCExp (CeFeat n) = CeFeat n
+
+subArgs :: String -> CExp -> [CExp]
+subArgs op' (CeOp op'' args') | op'' == op' = args'
+subArgs _ x = [x]
 
 
 collectElements :: UClafer -> [IElement]
@@ -224,14 +445,23 @@ iModuleToFMJSON imod = do
     mapM_ validateElement elts
     ucfrs <- catMaybes <$> mapM (unrollElementClafer uidMap) elts
     let ucfrs' = assignUids ucfrs
+
     let allUCfrs = concatMap walkUClafer ucfrs'
     mapM_ validateUClafer allUCfrs
     let parentMap = foldMap makeParentMap allUCfrs
     let feats = map (uclaferFeature parentMap) allUCfrs
     let rootNames = filter (\n -> not $ M.member n parentMap) $ map (\f -> f ^. fName) feats
 
+    -- `buildResolve` works by tree traversal, since we need to know the number
+    -- of instances of each IClafer within each UClafer and its descendants.
+    let (globalResMap, ucfrResMaps) = buildResolve ucfrs'
+    let scopes = buildScopes ucfrResMaps parentMap
+    let globalCtx = ConstraintContext Nothing scopes globalResMap
+    gCExps <- elementsConstraints globalCtx elts
+    ucCExps <- concat <$> mapM (uClaferConstraints globalCtx) allUCfrs
+
     return $ A.object
         [ "features" A..= M.fromList [(f ^. fName, f) | f <- feats]
         , "roots" A..= rootNames
-        , "constraints" A..= ([] :: [()])
+        , "constraints" A..= map simplifyCExp (gCExps ++ ucCExps)
         ]
