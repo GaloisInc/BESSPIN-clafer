@@ -464,4 +464,5 @@ iModuleToFMJSON imod = do
         [ "features" A..= M.fromList [(f ^. fName, f) | f <- feats]
         , "roots" A..= rootNames
         , "constraints" A..= map simplifyCExp (gCExps ++ ucCExps)
+        , "version" A..= A.object ["base" A..= (1 :: Int)]
         ]

@@ -28,6 +28,7 @@ classifies configurations as valid or invalid, based on the structure of the
 forest, the properties of individual features, and the results of evaluating
 the constraint expressions under the configuration.
 
+
 ## Top level
 
 The top-level JSON object of an FMJSON file has the following fields:
@@ -40,6 +41,10 @@ The top-level JSON object of an FMJSON file has the following fields:
 * `roots`: An array containing the names of the root feature of each tree.
 
 * `constraints`: An array of [constraint expressions](#constraints).
+
+* `version`: An object containing file format [version
+  information](#versioning).
+
 
 ## Features
 
@@ -82,6 +87,7 @@ A feature object contains the following fields:
 The features of a feature model form a collection of trees.  Use the `parent`
 and `children` fields and the top-level `roots` array to traverse the trees.
 
+
 ## Constraints
 
 A constraint expression is a JSON object with a `kind` field, and additional
@@ -116,3 +122,49 @@ When `kind` is `"lit"`, the object has one additional field:
 When `kind` is `"feat"`, the object has one additional field:
 
 * `name`: The name of a feature.
+
+
+## Versioning
+
+The version object has one mandatory key:
+
+* `base`: An integer, indicating the version of the base FMJSON format used for
+  the current file.
+
+The current version of the FMJSON format is **1**.  Future revisions of the
+FMJSON format will be assigned higher version numbers.
+
+Tools that output FMJSON must set `version.base` to an FMJSON format version
+that supports all constructs used in the output file.  There may be more than
+one such version, especially if a tool generates only a subset of supported
+constructs.  Tools should not rely on the contents of the model when choosing
+an FMJSON version (for example, using a lower version for simple models, and
+switching to a higher version only for models that use additional features),
+since this makes it harder to check for compatibility between different tools.
+
+Tools that input FMJSON should check `version.base` against a whitelist of
+known supported versions.  There are no backwards compatibility guarantees
+between versions.  Checking against a whitelist ensures that incompatibilities
+between tools are detected early, rather than failing only on specific models
+or appearing to succeed but assigning different semantics to the file.
+
+### Extensions
+
+Tools can define extensions to the FMJSON format.  This is mainly intended to
+allow annotating features, constraints, or the entire model with additional
+information.  For example, some tools may wish to track whether a constraint
+was provided by user action or by an automated process of some kind.
+
+Presence of an extension is indicated by including an additional field to the
+version object whose name is the name of the extension and whose value is an
+integer version number for this extension.
+
+Extensions can add new extension-specific fields to any object (including the
+root object), and the can restrict the range of values permitted in any
+existing field.  They cannot expand the range of allowed values.  This
+requirement ensures that tools can safely ignore unknown extensions.
+
+Tools that transform or otherwise manipulate FMJSON files should not attempt to
+preserve data associated with unknown extensions.  Extensions may impose
+arbitrary invariants, which cannot be preserved in general without knowledge of
+the extensions in question.
