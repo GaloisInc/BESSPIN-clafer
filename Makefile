@@ -17,6 +17,7 @@ install:
 	cp -f alloy4.2.jar $(to)
 	cp -f ecore2clafer.jar $(to)
 	cp `stack path --local-install-root`/bin/clafer$(EXE) $(to)
+	cp -f -r ./alloy-check/ $(to)/
 
 # regenerate grammar, call after clafer.cf changed
 grammar:

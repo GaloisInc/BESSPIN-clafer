@@ -125,6 +125,7 @@ import           Language.Clafer.Generator.AlloyLtl
 import           Language.Clafer.Generator.Choco
 import           Language.Clafer.Generator.Concat
 import           Language.Clafer.Generator.FMJSON
+import           Language.Clafer.Generator.Configurator
 import           Language.Clafer.Generator.Graph
 import           Language.Clafer.Generator.Html
 import           Language.Clafer.Generator.Stats
@@ -471,7 +472,7 @@ iClaferBasedChecks iModule = (not (any hasReferenceToReal iClafers), null tempMo
     hasTempModifier (IClafer _ (IClaferModifiers _ isInitial' isFinal') _ _ _ _ _ _ _ _ _) = isInitial' || isFinal'
 
 -- | Generates outputs for the given IR.
-generate :: Monad m => ClaferT m (Map.Map ClaferMode CompilerResult)
+generate :: MonadIO m => ClaferT m (Map.Map ClaferMode CompilerResult)
 generate =
   do
     env <- getEnv
@@ -487,162 +488,188 @@ generate =
       stats = showStats au $ statsModule iModule
       scopes = getScopeStrategy (scope_strategy cargs) iModule
 
-    return $ Map.fromList (
-        -- result for Alloy
-        (if Alloy `elem` modes
-         then if hasNoRealLiterals && hasNoReferenceToReal && hasNoProductOperator
-              then
-                 let
-                    (imod,strMap) = astrModule iModule
-                    useAlloyLtlGen = not staticClaferSubset || AlloyLtl `elem` modes
-                    (genAlloyCode, alloyModes, fileExt) = if useAlloyLtlGen then (genAlloyLtlModule, [Alloy, AlloyLtl], "tmp.als") else (genModule, [Alloy], "als")
-                    alloyCode = genAlloyCode cargs{mode = alloyModes} (imod, genv) scopes otherTokens'
-                    addCommentStats = if no_stats cargs then const else addStats
-                 in
-                    [ (Alloy,
-                      CompilerResult {
-                       extension = fileExt,
-                       outputCode = addCommentStats (fst alloyCode) stats,
-                       statistics = stats,
-                       claferEnv  = env,
-                       mappingToAlloy = fromMaybe [] (Just $ snd alloyCode),
-                       stringMap = strMap,
-                       scopesList = scopes
+    -- Result for Config has to be handled separately since the code has to execute in the ClaferT monad
+    resultsMap <-
+      (if (Config `elem` modes)
+        then do
+          configStatus <- generateConfigurationStatus iModule genv regenerateOutputs
+          return $ case configStatus of
+            Right m ->
+                [ (Config,
+                  CompilerResult {
+                    extension = "config-results.json",
+                    outputCode = convertString $ encode m,
+                    statistics = stats,
+                    claferEnv  = env,
+                    mappingToAlloy = [],
+                    stringMap = Map.empty,
+                    scopesList = []
+                  }) ]
+            Left err ->
+                [ (Config,
+                  NoCompilerResult {
+                    reason = err
+                  }) ]                
+      else return []) >>= return . Map.fromList
+  
+    return $ Map.union resultsMap $ Map.fromList (
+      -- result for Alloy
+      (if Alloy `elem` modes
+        then if hasNoRealLiterals && hasNoReferenceToReal && hasNoProductOperator
+            then
+                let
+                  (imod,strMap) = astrModule iModule
+                  useAlloyLtlGen = not staticClaferSubset || AlloyLtl `elem` modes
+                  (genAlloyCode, alloyModes, fileExt) = if useAlloyLtlGen then (genAlloyLtlModule, [Alloy, AlloyLtl], "tmp.als") else (genModule, [Alloy], "als")
+                  alloyCode = genAlloyCode cargs{mode = alloyModes} (imod, genv) scopes otherTokens'
+                  addCommentStats = if no_stats cargs then const else addStats
+                in
+                  [ (Alloy,
+                    CompilerResult {
+                      extension = fileExt,
+                      outputCode = addCommentStats (fst alloyCode) stats,
+                      statistics = stats,
+                      claferEnv  = env,
+                      mappingToAlloy = fromMaybe [] (Just $ snd alloyCode),
+                      stringMap = strMap,
+                      scopesList = scopes
+                    })
+                  ]
+            else [ (Alloy,
+                    NoCompilerResult {
+                        reason = "Alloy output unavailable because the model contains: "
+                              ++ (if hasNoRealLiterals then "" else "a real number literal, ")
+                              ++ (if hasNoReferenceToReal then "" else "a reference to a real, ")
+                              ++ (if hasNoProductOperator then "" else "the product operator, ")
                       })
                     ]
-              else [ (Alloy,
+        else []
+      )
+      -- result for JSON
+      ++ (if (JSON `elem` modes)
+          then [(JSON,
+                CompilerResult {
+                  extension = "json",
+                  outputCode = concat
+                    [ "{"
+                    , case gatherObjectivesAndAttributes iModule $ astModuleTrace env of
+                        Nothing         -> ""
+                        Just objectives -> "\"objectives\":" ++ convertString (encode $ toJSON objectives) ++ ","
+                    , "\"iModule\":"
+                    , convertString $ encode $ toJSON iModule
+                    , "}"
+                    ],
+                  statistics = stats,
+                  claferEnv  = env,
+                  mappingToAlloy = [],
+                  stringMap = Map.empty,
+                  scopesList = []
+                }) ]
+        else []
+      )
+      -- result for JSON
+      ++ (if (FMJSON `elem` modes)
+          then case iModuleToFMJSON iModule of
+              Right j ->
+                  [ (FMJSON,
+                      CompilerResult {
+                      extension = "fm.json",
+                      outputCode = convertString $ encode j,
+                      statistics = stats,
+                      claferEnv  = env,
+                      mappingToAlloy = [],
+                      stringMap = Map.empty,
+                      scopesList = []
+                      }) ]
+              Left err ->
+                  [ (FMJSON,
                       NoCompilerResult {
-                         reason = "Alloy output unavailable because the model contains: "
-                                ++ (if hasNoRealLiterals then "" else "a real number literal, ")
-                                ++ (if hasNoReferenceToReal then "" else "a reference to a real, ")
-                                ++ (if hasNoProductOperator then "" else "the product operator, ")
-                        })
-                     ]
-          else []
-        )
-        -- result for JSON
-        ++ (if (JSON `elem` modes)
-            then [(JSON,
-                  CompilerResult {
-                   extension = "json",
-                   outputCode = concat
-                     [ "{"
-                     , case gatherObjectivesAndAttributes iModule $ astModuleTrace env of
-                          Nothing         -> ""
-                          Just objectives -> "\"objectives\":" ++ convertString (encode $ toJSON objectives) ++ ","
-                     , "\"iModule\":"
-                     , convertString $ encode $ toJSON iModule
-                     , "}"
-                     ],
-                   statistics = stats,
-                   claferEnv  = env,
-                   mappingToAlloy = [],
-                   stringMap = Map.empty,
-                   scopesList = []
-                  }) ]
-          else []
-        )
-        -- result for JSON
-        ++ (if (FMJSON `elem` modes)
-            then case iModuleToFMJSON iModule of
-                Right j ->
-                    [ (FMJSON,
-                       CompilerResult {
-                        extension = "fm.json",
-                        outputCode = convertString $ encode j,
+                      reason = err
+                      }) ]
+                        
+        else []
+      )
+      -- result for Clafer
+      ++ (if Mode.Clafer `elem` modes
+        then [ (Mode.Clafer,
+                CompilerResult {
+                  extension = "des.cfr",
+                  outputCode = printTree $ sugarModule iModule,
+                  statistics = stats,
+                  claferEnv  = env,
+                  mappingToAlloy = [],
+                  stringMap = Map.empty,
+                  scopesList = []
+                }) ]
+        else []
+      )
+      -- result for Html
+      ++ (if Html `elem` modes
+        then [ (Html,
+                CompilerResult {
+                  extension = "html",
+                  outputCode = generateHtml env,
+                  statistics = stats,
+                  claferEnv  = env,
+                  mappingToAlloy = [],
+                  stringMap = Map.empty,
+                  scopesList = []
+                }) ]
+        else []
+      )
+      ++ (if Graph `elem` modes
+        then [ (Graph,
+                CompilerResult {
+                    extension = "dot",
+                    outputCode = genSimpleGraph ast' iModule (takeBaseName $ file cargs) (show_references cargs),
+                    statistics = stats,
+                    claferEnv  = env,
+                    mappingToAlloy = [],
+                    stringMap = Map.empty,
+                    scopesList = []
+                }) ]
+        else []
+      )
+      ++ (if CVLGraph `elem` modes
+        then [ (CVLGraph,
+                CompilerResult {
+                      extension = "cvl.dot",
+                      outputCode = genCVLGraph ast' iModule (takeBaseName $ file cargs),
+                      statistics = stats,
+                      claferEnv  = env,
+                      mappingToAlloy = [],
+                      stringMap = Map.empty,
+                      scopesList = []
+                }) ]
+        else []
+      )
+      -- result for Choco
+      ++ (if Choco `elem` modes
+          then if hasNoRealLiterals && hasNoReferenceToReal && staticClaferSubset
+                then [(Choco,
+                      CompilerResult {
+                        extension = "js",
+                        outputCode = genCModule (iModule, genv) scopes otherTokens',
                         statistics = stats,
                         claferEnv  = env,
                         mappingToAlloy = [],
                         stringMap = Map.empty,
-                        scopesList = []
-                       }) ]
-                Left err ->
-                    [ (FMJSON,
-                       NoCompilerResult {
-                        reason = err
-                       }) ]
-                          
-          else []
-        )
-        -- result for Clafer
-        ++ (if Mode.Clafer `elem` modes
-          then [ (Mode.Clafer,
-                  CompilerResult {
-                   extension = "des.cfr",
-                   outputCode = printTree $ sugarModule iModule,
-                   statistics = stats,
-                   claferEnv  = env,
-                   mappingToAlloy = [],
-                   stringMap = Map.empty,
-                   scopesList = []
-                  }) ]
-          else []
-        )
-        -- result for Html
-        ++ (if Html `elem` modes
-          then [ (Html,
-                  CompilerResult {
-                   extension = "html",
-                   outputCode = generateHtml env,
-                   statistics = stats,
-                   claferEnv  = env,
-                   mappingToAlloy = [],
-                   stringMap = Map.empty,
-                   scopesList = []
-                  }) ]
-          else []
-        )
-        ++ (if Graph `elem` modes
-          then [ (Graph,
-                  CompilerResult {
-                     extension = "dot",
-                     outputCode = genSimpleGraph ast' iModule (takeBaseName $ file cargs) (show_references cargs),
-                     statistics = stats,
-                     claferEnv  = env,
-                     mappingToAlloy = [],
-                     stringMap = Map.empty,
-                     scopesList = []
-                  }) ]
-          else []
-        )
-        ++ (if CVLGraph `elem` modes
-          then [ (CVLGraph,
-                  CompilerResult {
-                       extension = "cvl.dot",
-                       outputCode = genCVLGraph ast' iModule (takeBaseName $ file cargs),
-                       statistics = stats,
-                       claferEnv  = env,
-                       mappingToAlloy = [],
-                       stringMap = Map.empty,
-                       scopesList = []
-                  }) ]
-          else []
-        )
-        -- result for Choco
-        ++ (if Choco `elem` modes
-            then if hasNoRealLiterals && hasNoReferenceToReal && staticClaferSubset
-                 then [(Choco,
-                        CompilerResult {
-                          extension = "js",
-                          outputCode = genCModule (iModule, genv) scopes otherTokens',
-                          statistics = stats,
-                          claferEnv  = env,
-                          mappingToAlloy = [],
-                          stringMap = Map.empty,
-                          scopesList = scopes
-                         })
-                      ]
-                 else [(Choco,
-                        NoCompilerResult {
-                          reason = if not staticClaferSubset
-                            then "Choco output unavailable because the model contains temporal operators"
-                            else "Choco output unavailable because the model contains: "
-                                 ++ (if hasNoRealLiterals then "" else "a real number literal, ")
-                                 ++ (if hasNoReferenceToReal then "" else "a reference to a real. ")
+                        scopesList = scopes
                         })
-                      ]
-          else []
-        ))
+                    ]
+                else [(Choco,
+                      NoCompilerResult {
+                        reason = if not staticClaferSubset
+                          then "Choco output unavailable because the model contains temporal operators"
+                          else "Choco output unavailable because the model contains: "
+                                ++ (if hasNoRealLiterals then "" else "a real number literal, ")
+                                ++ (if hasNoReferenceToReal then "" else "a reference to a real. ")
+                      })
+                    ]
+        else []
+      ))
+    
+      
 
 -- | Result of generation for a given mode
 data CompilerResult
@@ -715,3 +742,18 @@ gatherObjectivesAndAttributes    iModule    astModuleTrace'      = let
 
     isIntClafer (IClafer{_reference=(Just IReference{_ref=pexp'})}) = any (`elem` ["integer", "int"]) $ getRefIds pexp'
     isIntClafer _                                                   = False
+
+regenerateOutputs :: MonadIO m => Module-> [ClaferMode] -> ClaferT m (Map.Map ClaferMode String)
+regenerateOutputs ast modes = do
+    currentArgs <- getEnv >>= return . args
+    let updatedArgs = currentArgs { mode = modes }
+    code <- lift $ runClaferT updatedArgs doGen
+    either throwErrs return code
+    where
+        doGen = do
+            env' <- getEnv
+            putEnv env'{ cAst = Just ast, astModuleTrace = traceAstModule ast }
+            iModule <- desugar Nothing
+            compile iModule
+            resultsMap <- generate -- Relies on the modes being set properly before this is invoked
+            return $ Map.fromList $ map (\m -> (m, outputCode $ resultsMap Map.! m)) modes

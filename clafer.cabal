@@ -98,6 +98,7 @@ library
                       , Language.Clafer.Generator.Graph
                       , Language.Clafer.Generator.Html
                       , Language.Clafer.Generator.Stats
+                      , Language.Clafer.Generator.Configurator
                       , Language.Clafer.Intermediate.Desugarer
                       , Language.Clafer.Intermediate.Intclafer
                       , Language.Clafer.Intermediate.Resolver
