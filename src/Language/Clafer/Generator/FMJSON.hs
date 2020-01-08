@@ -29,7 +29,6 @@ data UClafer = UClafer
 
 makeLenses ''UClafer
 
-
 unsupported :: String -> Either String a
 unsupported desc = Left $ "unsupported: " ++ desc
 
@@ -349,8 +348,9 @@ iExpConstraint _ctx e = unsupported $ "expression " ++ show e
 pExpConstraint :: ConstraintContext -> PExp -> Either String CExp
 pExpConstraint ctx e = case iExpConstraint ctx $ e ^. exp of
     Left err -> Left $ err ++ " (in constraint at " ++ show (e ^. inPos) ++ ")"
-    Right x -> Right x
-
+    Right x -> Right (guardCtx x)
+  where
+    guardCtx x = maybe x (\n -> CeOp "imp" [ CeFeat n, x ]) (ctx ^. ctxCurName)
 
 type ResolveMap = Map UID (Unique String)
 
