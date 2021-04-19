@@ -1,7 +1,6 @@
-[![Hackage](https://img.shields.io/hackage/v/clafer.svg)](https://hackage.haskell.org/package/clafer)
-[![Build Status](https://secure.travis-ci.org/gsdlab/clafer.svg)](http://travis-ci.org/gsdlab/clafer)
-
 # Clafer, the language
+
+This repository is a fork of [clafer](https://github.com/gsdlab/clafer) ported for the BESSPIN project.
 
 ##### v0.5.1
 
